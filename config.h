@@ -1,0 +1,9 @@
+
+#ifndef __CONFIG_H
+#define __CONFIG_H
+
+#define DEFAULT_SECTORS_PER_CLUSTER 2
+#define DEFAULT_BYTES_PER_SECTOR 512
+
+
+#endif // __CONFIG_H
