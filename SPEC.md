@@ -40,7 +40,8 @@ typedef struct
 - The space after the FAT is called the data region with everything before being the non-data region.
 - The FAT only represents clusters inside the data region of the boot filesystem.
 - The boot filesystem, save for the bootsector is entirely isolated from the main filesystem.
-- Directories contain boot file descriptors (a filesystem inside a filesystem).
+- Folders contain boot file descriptors (a filesystem inside a filesystem).
+- The folder's file size field is used for the number of entries instead of actual file size.
 
 ## File entry
 ```c

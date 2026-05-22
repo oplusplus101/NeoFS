@@ -247,7 +247,7 @@ sBootFileDescriptor CreateDescriptor(BYTE bType, PWCHAR wszFileName, QWORD qwFil
     return sDescriptor;
 }
 
-BOOL FindFileInDirectory(const sBootFileDescriptor *pParent, const PWCHAR wszFileName, sBootFileDescriptor *pResult, const INT iFile)
+BOOL FindFileInDirectory(const sBootFileDescriptor *pParent, const PWCHAR wszFileName, sBootFileDescriptor *pResult, PQWORD pResultOffset, const INT iFile)
 {
     PBYTE pBuffer = malloc(g_qwBytesPerCluster);
     QWORD qwCurrentCluster = pParent->dwFirstCluster;
@@ -268,6 +268,7 @@ BOOL FindFileInDirectory(const sBootFileDescriptor *pParent, const PWCHAR wszFil
             if (pDesc->bFileNameLength != qwFileNameLength) continue; // Optimisation
             if (memcmp(pDesc->wsFileName, wszFileName, qwFileNameLength * sizeof(WCHAR))) continue;
 
+            *pResultOffset = i + qwCurrentCluster * g_qwBytesPerCluster;
             memcpy(pResult, pDesc, sizeof(sBootFileDescriptor));
             free(pBuffer);
             return true;
@@ -276,11 +277,12 @@ BOOL FindFileInDirectory(const sBootFileDescriptor *pParent, const PWCHAR wszFil
         qwCurrentCluster = ReadFAT(qwCurrentCluster);
     }
 
+    *pResultOffset = 0;
     free(pBuffer);
     return false;
 }
 
-sBootFileDescriptor ParsePath(char *szPath, char *szResultFileName, INT iFile)
+sBootFileDescriptor ParsePath(char *szPath, char *szResultFileName, PQWORD pParentOffset, INT iFile)
 {
     sBootFileDescriptor sRoot = { 0 };
     sRoot.dwFirstCluster = g_dwNonDataRegion;
@@ -296,7 +298,7 @@ sBootFileDescriptor ParsePath(char *szPath, char *szResultFileName, INT iFile)
 
         WCHAR wszFileName[65] = { 0 };
         ToWideString(wszFileName, szFileName);
-        if (!FindFileInDirectory(&sRoot, wszFileName, &sRoot, iFile))
+        if (!FindFileInDirectory(&sRoot, wszFileName, &sRoot, pParentOffset, iFile))
             Error("Could not find '%s'", szFileName);
         szFileName = sNextFileName;
     }
@@ -378,14 +380,16 @@ void AddBootFile(int iArgc, char **arrArgv, INT iFile, QWORD qwFileSize)
     LoadFAT(iFile);
     
     char szFileName[65] = { 0 };
-    sBootFileDescriptor sParent = ParsePath(arrArgv[4], szFileName, iFile);
-
+    QWORD qwParentOffset = 0;
+    sBootFileDescriptor sParent = ParsePath(arrArgv[4], szFileName, &qwParentOffset, iFile);
+    
     WCHAR wszFileName[65] = { 0 };
     ToWideString(wszFileName, szFileName);
 
     // Check if the file exists
     sBootFileDescriptor sFile;
-    if (FindFileInDirectory(&sParent, wszFileName, &sFile, iFile))
+    QWORD _;
+    if (FindFileInDirectory(&sParent, wszFileName, &sFile, &_, iFile))
     {
         // Clean-up
         free(g_arrFAT);
@@ -414,7 +418,15 @@ void AddBootFile(int iArgc, char **arrArgv, INT iFile, QWORD qwFileSize)
 
     WriteFAT(sFile.dwFirstCluster, 0xFFFFFFFF);
     AddToBootDirectory(&sParent, &sFile, iFile);
-    
+
+    // Update the parent's size
+    if (qwParentOffset != 0)
+    {
+        sParent.qwFileSize++;
+        lseek(iFile, qwParentOffset, SEEK_SET);
+        write(iFile, &sParent, sizeof(sBootFileDescriptor));
+    }
+
     // Write the data
     WriteClusteredData(sFile.dwFirstCluster, pBuffer, qwHostFileSize, iFile);
 
@@ -435,12 +447,14 @@ void AddBootFolder(int iArgc, char **arrArgv, INT iFile, QWORD qwFileSize)
 
     // Construct a file descriptor
     char szFileName[65] = { 0 };
-    sBootFileDescriptor sParent = ParsePath(arrArgv[3], szFileName, iFile);
+    QWORD qwParentOffset = 0;
+    sBootFileDescriptor sParent = ParsePath(arrArgv[3], szFileName, &qwParentOffset, iFile);
     WCHAR wszFileName[65] = { 0 };
     ToWideString(wszFileName, szFileName);
 
     sBootFileDescriptor sFile;
-    if (FindFileInDirectory(&sParent, wszFileName, &sFile, iFile))
+    QWORD _;
+    if (FindFileInDirectory(&sParent, wszFileName, &sFile, &_, iFile))
     {
         // Clean-up
         free(g_arrFAT);
@@ -451,6 +465,14 @@ void AddBootFolder(int iArgc, char **arrArgv, INT iFile, QWORD qwFileSize)
     sFile = CreateDescriptor(2, wszFileName, 0, GetCluster());
     WriteFAT(sFile.dwFirstCluster, 0xFFFFFFFF);
     AddToBootDirectory(&sParent, &sFile, iFile);
+
+    // Update the parent's size
+    if (qwParentOffset != 0)
+    {
+        sParent.qwFileSize++;
+        lseek(iFile, qwParentOffset, SEEK_SET);
+        write(iFile, &sParent, sizeof(sBootFileDescriptor));
+    }
 
     StoreFAT(iFile);
 
